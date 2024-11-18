@@ -11,7 +11,7 @@ import (
 )
 
 type Database struct {
-	*mongo.Database
+	*mongo.Client
 }
 
 type Dataset struct {
@@ -35,11 +35,13 @@ func NewDatabase() *Database {
 	utils.Logger("database", "[+] Database initialized!")
 
 	return &Database{
-		Database: client.Database("datasets"),
+		Client: client,
 	}
 }
 
-func (db *Database) GetDatasets() ([]Dataset, error) {
+func (client *Database) GetDatasets() ([]Dataset, error) {
+	db := client.Database("datasets")
+
 	docs, err := db.Collection("datasets").Find(context.TODO(), bson.M{})
 	if err != nil {
 		return []Dataset{}, err
@@ -57,4 +59,27 @@ func (db *Database) GetDatasets() ([]Dataset, error) {
 	}
 
 	return datasets, nil
+}
+
+func (client *Database) GetData(dataset Dataset) ([]map[string]interface{}, error) {
+	opts := options.FindOptions{}
+	opts.SetLimit(10)
+
+	data := []map[string]interface{}{}
+
+	docs, err := client.Database(dataset.Database).Collection(dataset.Collection).Find(context.TODO(), bson.D{}, &opts)
+	if err != nil {
+		return data, err
+	}
+
+	for docs.Next(context.TODO()) {
+		result := make(map[string]interface{})
+
+		docs.Decode(&result)
+
+		data = append(data, result)
+
+	}
+
+	return data, nil
 }
