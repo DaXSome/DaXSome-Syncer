@@ -10,12 +10,8 @@ func Logger(logType string, stmts ...interface{}) {
 	var logger *color.Color
 
 	switch logType {
-	case "crawler":
-		logger = color.New(color.FgHiCyan)
-	case "indexer":
+	case "storage":
 		logger = color.New(color.FgHiGreen)
-	case "sniffer":
-		logger = color.New(color.FgHiYellow)
 	case "error":
 		logger = color.New(color.FgHiRed)
 	case "database":

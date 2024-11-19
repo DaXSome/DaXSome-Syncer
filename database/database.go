@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/daxsome/daxsome-syncer/utils"
@@ -40,6 +41,8 @@ func NewDatabase() *Database {
 }
 
 func (client *Database) GetDatasets() ([]Dataset, error) {
+	utils.Logger("database", "[+] Getting datasets...")
+
 	db := client.Database("datasets")
 
 	docs, err := db.Collection("datasets").Find(context.TODO(), bson.M{})
@@ -58,10 +61,14 @@ func (client *Database) GetDatasets() ([]Dataset, error) {
 
 	}
 
+	utils.Logger("database", fmt.Sprintf("[+] Got %v datasets", len(datasets)))
+
 	return datasets, nil
 }
 
 func (client *Database) GetData(dataset Dataset) ([]map[string]interface{}, error) {
+	utils.Logger("database", fmt.Sprintf("[+] Getting data from %v.%v", dataset.Database, dataset.Collection))
+
 	opts := options.FindOptions{}
 	opts.SetLimit(10)
 
@@ -80,6 +87,8 @@ func (client *Database) GetData(dataset Dataset) ([]map[string]interface{}, erro
 		data = append(data, result)
 
 	}
+
+	utils.Logger("database", fmt.Sprintf("[+] Got %v documents from %v.%v", len(data), dataset.Database, dataset.Collection))
 
 	return data, nil
 }
