@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/csv"
 	"fmt"
+	"log"
 	"os"
 	"reflect"
 	"sort"
@@ -10,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/daxsome/daxsome-syncer/database"
+	"github.com/daxsome/daxsome-syncer/storage"
 	"github.com/daxsome/daxsome-syncer/utils"
 	"github.com/joho/godotenv"
 )
@@ -70,6 +73,9 @@ func main() {
 
 	db := database.NewDatabase()
 
+	storage, err := storage.NewStorage()
+	utils.HandleErr(err, "failed to setup storage")
+
 	wg := sync.WaitGroup{}
 
 	datasets, err := db.GetDatasets()
@@ -84,8 +90,16 @@ func main() {
 				return
 			}
 
-			convertToCSV(docs, fmt.Sprintf("%v-%v.csv", data.Database, data.Collection))
+			filename := fmt.Sprintf("%v-%v.csv", data.Database, data.Collection)
+			convertToCSV(docs, filename)
 
+			url, err := storage.UploadFile(context.TODO(), filename)
+			if err != nil {
+				utils.Logger("error", err)
+				return
+			}
+
+			log.Println(url)
 			wg.Done()
 		}(data)
 	}
