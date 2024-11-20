@@ -40,7 +40,7 @@ func convertToCSV(data []map[string]interface{}, outputFile string) error {
 		for j, header := range headers {
 			value := row[header]
 
-			if reflect.TypeOf(value).Kind() == reflect.String {
+			if value != nil && reflect.TypeOf(value).Kind() == reflect.String {
 				value = strings.ReplaceAll(value.(string), "&amp;", "&") // Prevent ';' being treated as separator
 			}
 
