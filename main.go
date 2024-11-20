@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/daxsome/daxsome-syncer/database"
 	"github.com/daxsome/daxsome-syncer/storage"
@@ -71,6 +73,18 @@ func extractHeaders(data []map[string]interface{}) []string {
 func main() {
 	godotenv.Load()
 
+	if _, err := os.Stat("snapshot.json"); err != nil {
+		os.WriteFile("snapshot.json", []byte("{}"), 0644)
+	}
+
+	snapshotFile, err := os.ReadFile("snapshot.json")
+	utils.HandleErr(err, "failed to read snapshot file")
+
+	snapshot := make(map[string]time.Time)
+
+	err = json.Unmarshal(snapshotFile, &snapshot)
+	utils.HandleErr(err, "failed to unmarshal snapshot file")
+
 	db := database.NewDatabase()
 
 	storage, err := storage.NewStorage()
@@ -84,13 +98,20 @@ func main() {
 	for _, data := range datasets {
 		wg.Add(1)
 		go func(data database.Dataset) {
-			docs, err := db.GetData(data)
+			defer wg.Done()
+
+			docs, err := db.GetData(data, snapshot)
 			if err != nil {
 				utils.Logger("error", err)
 				return
 			}
 
+			if len(docs) == 0 {
+				return
+			}
+
 			filename := fmt.Sprintf("%v-%v.csv", data.Database, data.Collection)
+
 			convertToCSV(docs, filename)
 
 			url, err := storage.UploadFile(context.TODO(), filename)
@@ -100,9 +121,13 @@ func main() {
 			}
 
 			log.Println(url)
-			wg.Done()
 		}(data)
 	}
 
 	wg.Wait()
+
+	snapshotJson, err := json.Marshal(snapshot)
+	utils.HandleErr(err, "failed to marshal snapshot")
+
+	os.WriteFile("snapshot.json", snapshotJson, 0644)
 }

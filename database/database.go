@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/daxsome/daxsome-syncer/utils"
 	"go.mongodb.org/mongo-driver/bson"
@@ -66,29 +67,56 @@ func (client *Database) GetDatasets() ([]Dataset, error) {
 	return datasets, nil
 }
 
-func (client *Database) GetData(dataset Dataset) ([]map[string]interface{}, error) {
-	utils.Logger("database", fmt.Sprintf("[+] Getting data from %v.%v", dataset.Database, dataset.Collection))
+func (client *Database) GetData(dataset Dataset, snapshot map[string]time.Time) ([]map[string]interface{}, error) {
+	utils.Logger("database", fmt.Sprintf("[+] Checking last update for %v.%v", dataset.Database, dataset.Collection))
 
 	opts := options.FindOptions{}
-	opts.SetLimit(10)
 
 	data := []map[string]interface{}{}
 
-	docs, err := client.Database(dataset.Database).Collection(dataset.Collection).Find(context.TODO(), bson.D{}, &opts)
+	db := client.Database(dataset.Database)
+
+	metadataDoc := db.Collection("meta_data").FindOne(context.TODO(), bson.D{})
+
+	metadata := struct {
+		UpdatedAt string `bson:"updated_at"`
+	}{}
+
+	metadataDoc.Decode(&metadata)
+
+	parsedTime, err := time.Parse("2006-01-02T15:04:05Z", metadata.UpdatedAt)
 	if err != nil {
 		return data, err
 	}
 
-	for docs.Next(context.TODO()) {
-		result := make(map[string]interface{})
+	isOutdated := parsedTime.After(snapshot[dataset.Database])
 
-		docs.Decode(&result)
+	if isOutdated {
+		utils.Logger("database", fmt.Sprintf("[+] Getting data from %v.%v", dataset.Database, dataset.Collection))
 
-		data = append(data, result)
+		docs, err := db.Collection(dataset.Collection).Find(context.TODO(), bson.D{}, &opts)
+		if err != nil {
+			return data, err
+		}
+
+		for docs.Next(context.TODO()) {
+			result := make(map[string]interface{})
+
+			docs.Decode(&result)
+
+			data = append(data, result)
+
+		}
+
+		utils.Logger("database", fmt.Sprintf("[+] Got %v documents from %v.%v", len(data), dataset.Database, dataset.Collection))
+
+		snapshot[dataset.Database] = parsedTime
+
+		return data, nil
 
 	}
 
-	utils.Logger("database", fmt.Sprintf("[+] Got %v documents from %v.%v", len(data), dataset.Database, dataset.Collection))
+	utils.Logger("database", fmt.Sprintf("[+] %v-%v is up to date", dataset.Database, dataset.Collection))
 
 	return data, nil
 }
