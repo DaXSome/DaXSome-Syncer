@@ -3,15 +3,16 @@ package main
 import (
 	"context"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/daxsome/daxsome-syncer/database"
 	"github.com/daxsome/daxsome-syncer/storage"
@@ -19,20 +20,57 @@ import (
 	"github.com/joho/godotenv"
 )
 
-func convertToCSV(data []map[string]interface{}, outputFile string) error {
-	headers := extractHeaders(data)
+func readFromCSV(filepath string) ([][]string, error) {
+	var records [][]string
 
-	file, err := os.Create(outputFile)
+	file, err := os.Open(filepath)
+	if err != nil {
+		return records, fmt.Errorf("error opening file: %v", err)
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return records, fmt.Errorf("error reading CSV: %v", err)
+		}
+		records = append(records, record)
+	}
+
+	return records, nil
+}
+
+func convertToCSV(data []map[string]interface{}, outputFile string, isNew bool) error {
+	var file *os.File
+
+	file, err := os.OpenFile(outputFile, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
 	if err != nil {
 		return fmt.Errorf("error creating file: %v", err)
 	}
+
 	defer file.Close()
 
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
 
-	if err := writer.Write(headers); err != nil {
-		return fmt.Errorf("error writing headers: %v", err)
+	var headers []string
+
+	if isNew {
+		headers = extractHeaders(data)
+		if err := writer.Write(headers); err != nil {
+			return fmt.Errorf("error writing headers: %v", err)
+		}
+	} else {
+		reader := csv.NewReader(file)
+
+		for i := 0; i < 1; i++ {
+			headers, _ = reader.Read()
+		}
 	}
 
 	for _, row := range data {
@@ -59,11 +97,7 @@ func extractHeaders(data []map[string]interface{}) []string {
 	headers := []string{}
 
 	for k := range data[0] {
-		// Skip doc id
-		if k == "_id" {
-			continue
-		}
-		headers = append(headers, k)
+		headers = append(headers, strings.ToLower(k))
 	}
 	sort.Strings(headers)
 
@@ -72,18 +106,6 @@ func extractHeaders(data []map[string]interface{}) []string {
 
 func main() {
 	godotenv.Load()
-
-	if _, err := os.Stat("snapshot.json"); err != nil {
-		os.WriteFile("snapshot.json", []byte("{}"), 0644)
-	}
-
-	snapshotFile, err := os.ReadFile("snapshot.json")
-	utils.HandleErr(err, "failed to read snapshot file")
-
-	snapshot := make(map[string]time.Time)
-
-	err = json.Unmarshal(snapshotFile, &snapshot)
-	utils.HandleErr(err, "failed to unmarshal snapshot file")
 
 	db := database.NewDatabase()
 
@@ -100,34 +122,48 @@ func main() {
 		go func(data database.Dataset) {
 			defer wg.Done()
 
-			docs, err := db.GetData(data, snapshot)
-			if err != nil {
-				utils.Logger("error", err)
-				return
-			}
-
-			if len(docs) == 0 {
-				return
-			}
-
 			filename := fmt.Sprintf("%v-%v.csv", data.Database, data.Collection)
 
-			convertToCSV(docs, filename)
+			fullPath := filepath.Join("data", filename)
 
-			url, err := storage.UploadFile(context.TODO(), filename)
+			var lastID string
+			isNew := true
+
+			if _, err := os.Stat(fullPath); err == nil {
+
+				records, err := readFromCSV(fullPath)
+				if err != nil {
+					utils.Logger("error", err)
+					return
+				}
+
+				slices.Reverse(records)
+
+				lastID = records[0][0]
+				isNew = false
+
+			}
+
+			docs, err := db.GetData(data, lastID)
 			if err != nil {
 				utils.Logger("error", err)
 				return
 			}
 
-			log.Println(url)
+			if len(docs) > 0 {
+
+				convertToCSV(docs, fullPath, isNew)
+
+				url, err := storage.UploadFile(context.TODO(), fullPath)
+				if err != nil {
+					utils.Logger("error", err)
+					return
+				}
+
+				log.Println(url)
+			}
 		}(data)
 	}
 
 	wg.Wait()
-
-	snapshotJson, err := json.Marshal(snapshot)
-	utils.HandleErr(err, "failed to marshal snapshot")
-
-	os.WriteFile("snapshot.json", snapshotJson, 0644)
 }

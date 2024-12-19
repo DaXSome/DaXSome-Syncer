@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
+	"strings"
 
 	"github.com/daxsome/daxsome-syncer/utils"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -67,56 +68,74 @@ func (client *Database) GetDatasets() ([]Dataset, error) {
 	return datasets, nil
 }
 
-func (client *Database) GetData(dataset Dataset, snapshot map[string]time.Time) ([]map[string]interface{}, error) {
+func (client *Database) GetLastID(dataset Dataset) string {
+	db := client.Database(dataset.Database)
+
+	doc := db.Collection(dataset.Collection).FindOne(context.TODO(), bson.D{})
+
+	data := struct {
+		ID string `bson:"_id"`
+	}{}
+
+	doc.Decode(&data)
+
+	return data.ID
+}
+
+func (client *Database) GetData(dataset Dataset, lastID string) ([]map[string]interface{}, error) {
 	utils.Logger("database", fmt.Sprintf("[+] Checking last update for %v.%v", dataset.Database, dataset.Collection))
 
 	opts := options.FindOptions{}
 
+	opts.SetSort(bson.D{{Key: "_id", Value: 1}})
+
+	filter := bson.M{}
+
 	data := []map[string]interface{}{}
 
-	db := client.Database(dataset.Database)
-
-	metadataDoc := db.Collection("meta_data").FindOne(context.TODO(), bson.D{})
-
-	metadata := struct {
-		UpdatedAt string `bson:"updated_at"`
-	}{}
-
-	metadataDoc.Decode(&metadata)
-
-	parsedTime, err := time.Parse("2006-01-02T15:04:05Z", metadata.UpdatedAt)
-	if err != nil {
-		return data, err
-	}
-
-	isOutdated := parsedTime.After(snapshot[dataset.Database])
-
-	if isOutdated {
-		utils.Logger("database", fmt.Sprintf("[+] Getting data from %v.%v", dataset.Database, dataset.Collection))
-
-		docs, err := db.Collection(dataset.Collection).Find(context.TODO(), bson.D{}, &opts)
+	if lastID != "" {
+		primitiveId, err := primitive.ObjectIDFromHex(lastID)
 		if err != nil {
 			return data, err
 		}
 
-		for docs.Next(context.TODO()) {
-			result := make(map[string]interface{})
 
-			docs.Decode(&result)
+		filter["_id"] = bson.M{"$gt": primitiveId}
+	}
 
-			data = append(data, result)
+	db := client.Database(dataset.Database)
 
+	utils.Logger("database", fmt.Sprintf("[+] Getting data from %v.%v", dataset.Database, dataset.Collection))
+
+	docs, err := db.Collection(dataset.Collection).Find(context.TODO(), filter, &opts)
+	if err != nil {
+		return data, err
+	}
+
+	for docs.Next(context.TODO()) {
+		result := make(map[string]interface{})
+
+		docs.Decode(&result)
+
+		if id, ok := result["_id"].(primitive.ObjectID); ok {
+			result["_id"] = id.Hex()
 		}
 
-		utils.Logger("database", fmt.Sprintf("[+] Got %v documents from %v.%v", len(data), dataset.Database, dataset.Collection))
+		// Convert all keys to lowercase
+		for key, value := range result {
+			newKey := strings.ToLower(key)
+			result[newKey] = value
 
-		snapshot[dataset.Database] = parsedTime
+			if newKey != key {
+				delete(result, key)
+			}
+		}
 
-		return data, nil
+		data = append(data, result)
 
 	}
 
-	utils.Logger("database", fmt.Sprintf("[+] %v-%v is up to date", dataset.Database, dataset.Collection))
+	utils.Logger("database", fmt.Sprintf("[+] Got %v documents from %v.%v", len(data), dataset.Database, dataset.Collection))
 
 	return data, nil
 }

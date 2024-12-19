@@ -51,7 +51,7 @@ func (s *Storage) UploadFile(ctx context.Context, file string) (string, error) {
 
 	defer f.Close()
 
-	fullPath := filepath.Join("DaXSome", "datasets", file)
+	fullPath := filepath.Join("DaXSome", "datasets", filepath.Base(file))
 
 	obj := s.Object(fullPath)
 
